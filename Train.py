@@ -112,6 +112,7 @@ def generate_seed_data(dims, seq_length, n_sequences, seed, held_out_fraction=0.
     noise_token = len(vocab_tokens)
     vocab_tokens.append("N")
     vocab_size = len(vocab_tokens)
+    token_to_coord[noise_token] = tuple(dims)
 
     lattice_adj = {c: [] for c in all_coords}
     coord_pairs = []
@@ -125,9 +126,19 @@ def generate_seed_data(dims, seq_length, n_sequences, seed, held_out_fraction=0.
                     lattice_adj[c].append(nb_t)
                     coord_pairs.append((c, nb_t))
 
-    n_held = max(1, int(len(coord_pairs) * held_out_fraction))
-    rng.shuffle(coord_pairs)
-    held_out_set = set(coord_pairs[:n_held])
+    undirected_edges = []
+    seen_edges = set()
+    for u, v in coord_pairs:
+        key = (min(u, v), max(u, v))
+        if key not in seen_edges:
+            seen_edges.add(key)
+            undirected_edges.append(key)
+    n_held = max(1, int(len(undirected_edges) * held_out_fraction))
+    rng.shuffle(undirected_edges)
+    held_out_set = set()
+    for u, v in undirected_edges[:n_held]:
+        held_out_set.add((u, v))
+        held_out_set.add((v, u))
     train_pairs = [p for p in coord_pairs if p not in held_out_set]
     train_adj = {c: [] for c in all_coords}
     for u, v in train_pairs:
@@ -139,53 +150,42 @@ def generate_seed_data(dims, seq_length, n_sequences, seed, held_out_fraction=0.
     n_val = n_sequences - n_train
 
     train_seqs = []
-    train_coords = []
     for _ in range(n_train):
         seq = []
-        cseq = []
         current = rng.choice(valid_train_starts)
         seq.append(coord_to_token[current])
-        cseq.append(list(current))
         for _ in range(seq_length - 1):
             if rng.random() < noise_rate:
                 seq.append(noise_token)
-                cseq.append(list(current))
             else:
-                if len(train_adj[current]) == 0:
-                    current = rng.choice(valid_train_starts)
                 nxt = rng.choice(train_adj[current])
                 seq.append(coord_to_token[nxt])
-                cseq.append(list(nxt))
                 current = nxt
         train_seqs.append(seq)
-        train_coords.append(cseq)
+
+    for _s in train_seqs:
+        for _t in range(len(_s) - 1):
+            if _s[_t] != noise_token and _s[_t + 1] != noise_token:
+                assert (token_to_coord[_s[_t]], token_to_coord[_s[_t + 1]]) not in held_out_set
 
     val_seqs = []
-    val_coords = []
     for _ in range(n_val):
         seq = []
-        cseq = []
         current = rng.choice(all_coords)
         seq.append(coord_to_token[current])
-        cseq.append(list(current))
         for _ in range(seq_length - 1):
             if rng.random() < noise_rate:
                 seq.append(noise_token)
-                cseq.append(list(current))
             else:
                 nxt = rng.choice(lattice_adj[current])
                 seq.append(coord_to_token[nxt])
-                cseq.append(list(nxt))
                 current = nxt
         val_seqs.append(seq)
-        val_coords.append(cseq)
 
     train_x = torch.tensor([s[:-1] for s in train_seqs], dtype=torch.long)
     train_y = torch.tensor([s[1:] for s in train_seqs], dtype=torch.long)
-    train_c = torch.tensor([c[:-1] for c in train_coords], dtype=torch.long)
     val_x = torch.tensor([s[:-1] for s in val_seqs], dtype=torch.long)
     val_y = torch.tensor([s[1:] for s in val_seqs], dtype=torch.long)
-    val_c = torch.tensor([c[:-1] for c in val_coords], dtype=torch.long)
 
     val_mask = torch.zeros(val_x.shape, dtype=torch.bool)
     val_train_mask = torch.zeros(val_x.shape, dtype=torch.bool)
@@ -194,8 +194,8 @@ def generate_seed_data(dims, seq_length, n_sequences, seed, held_out_fraction=0.
             tok_u = val_seqs[i][t]
             tok_v = val_seqs[i][t + 1]
             if tok_u != noise_token and tok_v != noise_token:
-                c_u = tuple(val_coords[i][t])
-                c_v = tuple(val_coords[i][t + 1])
+                c_u = token_to_coord[tok_u]
+                c_v = token_to_coord[tok_v]
                 if (c_u, c_v) in held_out_set:
                     val_mask[i, t] = True
                 else:
@@ -204,53 +204,31 @@ def generate_seed_data(dims, seq_length, n_sequences, seed, held_out_fraction=0.
     lattice = VoxelLattice(dims)
     wrouter = WormholeRouter(lattice, seed=seed)
 
-    train_wf = torch.zeros(train_c.shape[0], train_c.shape[1], dtype=torch.long)
-    for i in range(train_c.shape[0]):
-        for t in range(train_c.shape[1]):
-            c = tuple(train_c[i, t].tolist())
-            train_wf[i, t] = 1 if wrouter.has_wormhole(lattice.get_code(c)) else 0
+    coord_table = torch.tensor([token_to_coord[i] for i in range(vocab_size)], dtype=torch.long)
+    wf_table = torch.tensor([
+        1 if t < noise_token and wrouter.has_wormhole(lattice.get_code(token_to_coord[t])) else 0
+        for t in range(vocab_size)
+    ], dtype=torch.long)
 
-    val_wf = torch.zeros(val_c.shape[0], val_c.shape[1], dtype=torch.long)
-    for i in range(val_c.shape[0]):
-        for t in range(val_c.shape[1]):
-            c = tuple(val_c[i, t].tolist())
-            val_wf[i, t] = 1 if wrouter.has_wormhole(lattice.get_code(c)) else 0
+    rng_perm = random.Random(12345)
+    node_perm = list(range(len(all_coords)))
+    rng_perm.shuffle(node_perm)
 
-    rng_shuf = random.Random(12345)
-    shuf_coords = list(all_coords)
-    rng_shuf.shuffle(shuf_coords)
-    shuf_map = {i: list(shuf_coords[i]) for i in range(len(all_coords))}
-    shuf_map[noise_token] = [0, 0, 0, 0]
+    ctrl_coord_table = coord_table.clone()
+    ctrl_wf_table = wf_table.clone()
+    for i in range(len(all_coords)):
+        ctrl_coord_table[i] = coord_table[node_perm[i]]
+        ctrl_wf_table[i] = wf_table[node_perm[i]]
 
-    train_c_shuf = torch.zeros_like(train_c)
-    for i in range(train_x.shape[0]):
-        for t in range(train_x.shape[1]):
-            tok = train_x[i, t].item()
-            train_c_shuf[i, t] = torch.tensor(shuf_map[tok], dtype=torch.long)
+    train_c = coord_table[train_x]
+    val_c = coord_table[val_x]
+    train_wf = wf_table[train_x]
+    val_wf = wf_table[val_x]
 
-    val_c_shuf = torch.zeros_like(val_c)
-    for i in range(val_x.shape[0]):
-        for t in range(val_x.shape[1]):
-            tok = val_x[i, t].item()
-            val_c_shuf[i, t] = torch.tensor(shuf_map[tok], dtype=torch.long)
-
-    wh_count = sum(1 for c in all_coords if wrouter.has_wormhole(lattice.get_code(c)))
-    rng_rand = random.Random(54321)
-    cand_coords = list(all_coords)
-    rng_rand.shuffle(cand_coords)
-    rand_wh_set = set(cand_coords[:wh_count])
-
-    train_wf_rand = torch.zeros_like(train_wf)
-    for i in range(train_c.shape[0]):
-        for t in range(train_c.shape[1]):
-            c = tuple(train_c[i, t].tolist())
-            train_wf_rand[i, t] = 1 if c in rand_wh_set else 0
-
-    val_wf_rand = torch.zeros_like(val_wf)
-    for i in range(val_c.shape[0]):
-        for t in range(val_c.shape[1]):
-            c = tuple(val_c[i, t].tolist())
-            val_wf_rand[i, t] = 1 if c in rand_wh_set else 0
+    train_c_shuf = ctrl_coord_table[train_x]
+    val_c_shuf = ctrl_coord_table[val_x]
+    train_wf_rand = ctrl_wf_table[train_x]
+    val_wf_rand = ctrl_wf_table[val_x]
 
     train_x = train_x.to(device)
     train_y = train_y.to(device)
@@ -267,17 +245,21 @@ def generate_seed_data(dims, seq_length, n_sequences, seed, held_out_fraction=0.
     val_wf_rand = val_wf_rand.to(device)
     val_mask = val_mask.to(device)
     val_train_mask = val_train_mask.to(device)
+    coord_table = coord_table.to(device)
+    ctrl_coord_table = ctrl_coord_table.to(device)
+    wf_table = wf_table.to(device)
+    ctrl_wf_table = ctrl_wf_table.to(device)
 
-    scored_coords = [tuple(val_coords[i][t]) for i in range(len(val_seqs)) for t in range(seq_length - 1) if val_mask[i, t].item()]
-    oracle_floor = sum(math.log(len(lattice_adj[c])) for c in scored_coords) / max(1, len(scored_coords))
     uniform_baseline = math.log(vocab_size)
+    scored_coords = [token_to_coord[val_seqs[i][t]] for i in range(len(val_seqs)) for t in range(seq_length - 1) if val_mask[i, t].item()]
+    neighbor_baseline = sum(math.log(len(lattice_adj[c])) for c in scored_coords) / max(1, len(scored_coords))
 
     train_data = (train_x, train_y, train_c, train_c_shuf, train_wf, train_wf_rand)
     val_data = (val_x, val_y, val_c, val_c_shuf, val_wf, val_wf_rand)
 
     return (train_data, val_data, val_mask, val_train_mask, vocab_size, vocab_tokens,
-            token_to_coord, shuf_map, rand_wh_set, lattice, wrouter,
-            oracle_floor, uniform_baseline)
+            token_to_coord, coord_table, ctrl_coord_table, wf_table, ctrl_wf_table,
+            lattice, wrouter, uniform_baseline, neighbor_baseline, held_out_set, len(coord_pairs))
 
 
 def get_batch(split, train_data, val_data, bsz=None):
@@ -321,6 +303,7 @@ def evaluate_full_val(model, val_data, val_mask, val_train_mask, arm_type):
     total_loss = 0.0
     total_correct = 0
     total_scored = 0
+    edge_loss = 0.0
     edge_correct = 0
     edge_scored = 0
     bsz = batch_size
@@ -346,15 +329,17 @@ def evaluate_full_val(model, val_data, val_mask, val_train_mask, arm_type):
             total_correct += (preds == scored_targets).sum().item()
             total_scored += len(scored_targets)
         if tb.any():
-            edge_preds = logits[tb].argmax(dim=-1)
+            edge_logits = logits[tb]
             edge_targets = yb[tb]
-            edge_correct += (edge_preds == edge_targets).sum().item()
+            edge_loss += F.cross_entropy(edge_logits, edge_targets, reduction='sum').item()
+            edge_correct += (edge_logits.argmax(dim=-1) == edge_targets).sum().item()
             edge_scored += len(edge_targets)
     model.train()
     mean_val_loss = total_loss / max(1, total_scored)
     val_acc = total_correct / max(1, total_scored)
+    mean_edge_loss = edge_loss / max(1, edge_scored)
     train_edge_acc = edge_correct / max(1, edge_scored)
-    return mean_val_loss, val_acc, train_edge_acc
+    return mean_val_loss, val_acc, mean_edge_loss, train_edge_acc
 
 
 @torch.no_grad()
@@ -408,21 +393,23 @@ def train_model(model, arm_name, seed, train_data, val_data, val_mask, val_train
 
         if (step + 1) % eval_interval == 0:
             step_tr = estimate_progress_train(model, train_data, val_data, arm_type)
-            step_vl, _, _ = evaluate_full_val(model, val_data, val_mask, val_train_mask, arm_type)
+            step_vl, _, _, _ = evaluate_full_val(model, val_data, val_mask, val_train_mask, arm_type)
             final_train_loss = step_tr
             print(f"{arm_name}, seed {seed}, step {step + 1}: "
                   f"train loss {step_tr:.4f}, val loss {step_vl:.4f}")
 
     if final_train_loss == 0.0:
         final_train_loss = estimate_progress_train(model, train_data, val_data, arm_type)
-    final_val_loss, final_val_acc, final_edge_acc = evaluate_full_val(
+    final_val_loss, final_val_acc, final_edge_loss, final_edge_acc = evaluate_full_val(
         model, val_data, val_mask, val_train_mask, arm_type)
-    return final_val_loss, final_val_acc, final_edge_acc, final_train_loss
+    return final_val_loss, final_val_acc, final_edge_loss, final_edge_acc, final_train_loss
 
 
 init_data = generate_seed_data(lattice_dims, seq_len, num_seqs, seed=42)
 (init_tr, init_va, init_vm, init_vtm, vocab_size, vocab_tokens,
- token_to_coord, shuf_map, rand_wh_set, lattice_initial, wrouter_initial, _, _) = init_data
+ token_to_coord, coord_table, ctrl_coord_table, wf_table, ctrl_wf_table,
+ lattice_initial, wrouter_initial, _, _, held_out_set_initial, n_edges_total) = init_data
+
 
 dummy_vanilla = GPTLanguageModel(vocab_size, embd_dim=exp_embd, num_heads=exp_heads,
                                   num_layers=exp_layers, blk_size=exp_block, drop=exp_drop).to(device)
@@ -526,7 +513,7 @@ arm_specs = [
 results = {}
 for arm_name, _, _ in arm_specs:
     results[arm_name] = {'val_losses': [], 'bpcs': [], 'val_accs': [],
-                         'edge_accs': [], 'train_losses': [], 'params': 0}
+                         'edge_losses': [], 'edge_accs': [], 'train_losses': [], 'params': 0}
 
 saved_models = {}
 seed_0_val = None
@@ -537,9 +524,9 @@ uniform_baselines = []
 
 for s_idx, seed in enumerate(seeds):
     s_data = generate_seed_data(lattice_dims, seq_len, num_seqs, seed=seed)
-    (tr_d, va_d, va_m, va_tm, _, _, _, _, _, _, _, s_oracle, s_uniform) = s_data
-    oracle_floors.append(s_oracle)
+    (tr_d, va_d, va_m, va_tm, *_, s_uniform, s_neighbor, _, _) = s_data
     uniform_baselines.append(s_uniform)
+    oracle_floors.append(s_neighbor)
 
     if s_idx == 0:
         seed_0_val = va_d
@@ -552,11 +539,12 @@ for s_idx, seed in enumerate(seeds):
             torch.cuda.manual_seed(seed)
         model = make_fn()
         results[arm_name]['params'] = count_params(model)
-        vl, vacc, eacc, tl = train_model(model, arm_name, seed, tr_d, va_d, va_m, va_tm,
-                                         arm_type=arm_type)
+        vl, vacc, el, eacc, tl = train_model(model, arm_name, seed, tr_d, va_d, va_m, va_tm,
+                                              arm_type=arm_type)
         results[arm_name]['val_losses'].append(vl)
         results[arm_name]['bpcs'].append(vl / math.log(2))
         results[arm_name]['val_accs'].append(vacc)
+        results[arm_name]['edge_losses'].append(el)
         results[arm_name]['edge_accs'].append(eacc)
         results[arm_name]['train_losses'].append(tl)
 
@@ -620,67 +608,68 @@ for conformal_name, conformal_type in (("Full-Hybrid", ARM_FULL), ("Vanilla", AR
           f"avg set size: {avg_size:.2f}, calibration positions: {n_cal}, test positions: {n_test}")
 
 
-def measure_valid_move_rate(model, arm_type, token_to_coord, shuf_map, rand_wh_set,
-                            lattice, wrouter, n_steps=200, seed=42):
+def measure_generation(model, arm_type, token_to_coord, coord_table, ctrl_coord_table,
+                       wf_table, ctrl_wf_table, held_out_set, n_steps=200, n_chains=5, seed=42):
     model.eval()
-    torch.manual_seed(seed)
     use_coord = arm_type in (ARM_LATTICE, ARM_LATTICE_SHUF, ARM_FULL, ARM_HYBRID_CONTROL)
     use_flags = arm_type in (ARM_WORMHOLE, ARM_WORMHOLE_RAND, ARM_FULL, ARM_HYBRID_CONTROL)
     use_shuffled = arm_type in (ARM_LATTICE_SHUF, ARM_HYBRID_CONTROL)
     use_random_flags = arm_type in (ARM_WORMHOLE_RAND, ARM_HYBRID_CONTROL)
 
-    idx = torch.zeros((1, 1), dtype=torch.long, device=device)
-    current = token_to_coord[0]
-    real_coords = [current]
-    shuf_coords = [shuf_map[0]]
+    coords_lookup = ctrl_coord_table if use_shuffled else coord_table
+    flags_lookup = ctrl_wf_table if use_random_flags else wf_table
+    noise_token = len(token_to_coord) - 1
 
-    with torch.no_grad():
-        for _ in range(n_steps):
-            idx_cond = idx[:, -model.blk_size:]
-            span = idx_cond.shape[1]
-            ci = None
-            wf = None
-            if use_coord:
-                src = shuf_coords if use_shuffled else real_coords
-                ci = torch.tensor([src[-span:]], dtype=torch.long, device=device)
-            if use_flags:
-                if use_random_flags:
-                    flags = [1 if tuple(c) in rand_wh_set else 0 for c in real_coords[-span:]]
-                else:
-                    flags = [1 if wrouter.has_wormhole(lattice.get_code(tuple(c))) else 0
-                             for c in real_coords[-span:]]
-                wf = torch.tensor([flags], dtype=torch.long, device=device)
-            if arm_type in (ARM_VANILLA, ARM_MATCHED):
-                logits, _ = model(idx_cond)
-            else:
-                logits, _ = model(idx_cond, coord_indices=ci, wormhole_flags=wf)
-            probs = F.softmax(logits[:, -1, :], dim=-1)
-            nxt = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, nxt), dim=1)
-            tok = nxt.item()
-            if tok in token_to_coord:
-                current = token_to_coord[tok]
-            real_coords.append(current)
-            shuf_coords.append(shuf_map.get(tok, [0, 0, 0, 0]))
-
-    gen = idx[0].tolist()
     valid_moves = 0
     total_node_moves = 0
-    for t in range(len(gen) - 1):
-        u, v = gen[t], gen[t + 1]
-        if u in token_to_coord and v in token_to_coord:
-            c1 = token_to_coord[u]
-            c2 = token_to_coord[v]
-            total_node_moves += 1
-            if sum(abs(a - b) for a, b in zip(c1, c2)) == 1:
-                valid_moves += 1
-    return valid_moves / max(1, total_node_moves)
+    held_out_moves = 0
+    with torch.no_grad():
+        for chain in range(n_chains):
+            torch.manual_seed(seed + chain)
+            start_tok = chain % noise_token
+            idx = torch.tensor([[start_tok]], dtype=torch.long, device=device)
+            for _ in range(n_steps):
+                idx_cond = idx[:, -model.blk_size:]
+                ci = coords_lookup[idx_cond] if use_coord else None
+                wf = flags_lookup[idx_cond] if use_flags else None
+                if arm_type in (ARM_VANILLA, ARM_MATCHED):
+                    logits, _ = model(idx_cond)
+                else:
+                    logits, _ = model(idx_cond, coord_indices=ci, wormhole_flags=wf)
+                probs = F.softmax(logits[:, -1, :], dim=-1)
+                nxt = torch.multinomial(probs, num_samples=1)
+                idx = torch.cat((idx, nxt), dim=1)
+
+            gen = idx[0].tolist()
+            for t in range(len(gen) - 1):
+                u, v = gen[t], gen[t + 1]
+                if u != noise_token and v != noise_token:
+                    c1 = token_to_coord[u]
+                    c2 = token_to_coord[v]
+                    total_node_moves += 1
+                    if sum(abs(a - b) for a, b in zip(c1, c2)) == 1:
+                        valid_moves += 1
+                        if (c1, c2) in held_out_set:
+                            held_out_moves += 1
+    valid_frac = valid_moves / max(1, total_node_moves)
+    held_frac = held_out_moves / max(1, valid_moves)
+    return valid_frac, held_frac, total_node_moves, valid_moves
 
 
+natural_held_out = init_vm.sum().item() / max(1, (init_vm | init_vtm).sum().item())
+print(f"Natural held-out transition rate in validation split: {natural_held_out:.4f}")
+print(f"Held-out edges: {len(held_out_set_initial)} of {n_edges_total} lattice edges")
+print(f"Generation metrics use the seed {seeds[0]} model of each arm")
+
+gen_results = {}
 for arm_name, _, arm_type in arm_specs:
-    frac = measure_valid_move_rate(saved_models[arm_name], arm_type, token_to_coord, shuf_map,
-                                   rand_wh_set, lattice_initial, wrouter_initial, 200)
-    print(f"Valid lattice move fraction - {arm_name}: {frac:.4f}")
+    vfrac, hfrac, total_moves, valid_moves = measure_generation(
+        saved_models[arm_name], arm_type, token_to_coord, coord_table,
+        ctrl_coord_table, wf_table, ctrl_wf_table, held_out_set_initial, 200, 5)
+    gen_results[arm_name] = (vfrac, hfrac)
+    print(f"Valid lattice move fraction - {arm_name}: {vfrac:.4f} ({valid_moves}/{total_moves})")
+    print(f"Generated held-out-edge fraction - {arm_name}: {hfrac:.4f} "
+          f"(held-out edges among generated valid moves)")
 
 for m in saved_models.values():
     del m
@@ -692,26 +681,45 @@ overall_oracle = sum(oracle_floors) / len(oracle_floors)
 overall_uniform = sum(uniform_baselines) / len(uniform_baselines)
 
 header = (f"{'Arm':<20} {'Params':>8} {'Val Loss':>19} {'BPC':>19} "
-          f"{'Held-out Acc':>19} {'Train-Edge Acc':>19} {'Train Loss':>19}")
+          f"{'Held-out Acc':>19} {'Train-Edge Loss':>19} {'Train-Edge Acc':>19} "
+          f"{'Train Loss':>19} {'Valid Move':>11} {'Gen Held-Out':>13}")
 print(header)
-print("-" * 130)
+print("-" * 185)
 
 for arm_name, _, _ in arm_specs:
     r = results[arm_name]
     vl_m, vl_s = mean_std(r['val_losses'])
     bpc_m, bpc_s = mean_std(r['bpcs'])
     acc_m, acc_s = mean_std(r['val_accs'])
+    el_m, el_s = mean_std(r['edge_losses'])
     edge_m, edge_s = mean_std(r['edge_accs'])
     tl_m, tl_s = mean_std(r['train_losses'])
     params = r['params']
+    vf, hf = gen_results[arm_name]
     print(f"{arm_name:<20} {params:>8,} "
           f"{vl_m:>8.4f} +/- {vl_s:.4f} "
           f"{bpc_m:>8.4f} +/- {bpc_s:.4f} "
           f"{acc_m:>8.4f} +/- {acc_s:.4f} "
+          f"{el_m:>8.4f} +/- {el_s:.4f} "
           f"{edge_m:>8.4f} +/- {edge_s:.4f} "
-          f"{tl_m:>8.4f} +/- {tl_s:.4f}")
+          f"{tl_m:>8.4f} +/- {tl_s:.4f} "
+          f"{vf:>11.4f} {hf:>13.4f}")
 
-print(f"Uniform baseline: {overall_uniform:.4f}, Oracle floor: {overall_oracle:.4f}")
+print(f"Uniform baseline (log V): {overall_uniform:.4f}, "
+      f"Neighbor baseline (oracle floor): {overall_oracle:.4f}")
+
+for key_arm in ("Full-Hybrid", "Hybrid-Control"):
+    r = results[key_arm]
+    for i, seed in enumerate(seeds):
+        print(f"{key_arm}, seed {seed}: held-out val loss {r['val_losses'][i]:.4f}, "
+              f"train-edge loss {r['edge_losses'][i]:.4f}, "
+              f"train loss {r['train_losses'][i]:.4f}, "
+              f"held-out acc {r['val_accs'][i]:.4f}, train-edge acc {r['edge_accs'][i]:.4f}")
+
+diffs = [results['Full-Hybrid']['val_losses'][i] - results['Hybrid-Control']['val_losses'][i]
+         for i in range(len(seeds))]
+diff_m, diff_s = mean_std(diffs)
+print(f"Full-Hybrid minus Hybrid-Control held-out val loss: {diff_m:.4f} +/- {diff_s:.4f}")
 
 with open('john_wick.txt', 'r', encoding='utf-8') as f:
     jw_text = f.read()

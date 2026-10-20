@@ -276,7 +276,7 @@ class LatticeEmbedding(nn.Module):
         self.dims = dims
         per_axis = embd_dim // 4
         self.coord_embeds = nn.ModuleList([
-            nn.Embedding(d, per_axis) for d in dims
+            nn.Embedding(d + 1, per_axis) for d in dims
         ])
         total = per_axis * 4
         self.proj = nn.Linear(total, embd_dim) if total != embd_dim else nn.Identity()
