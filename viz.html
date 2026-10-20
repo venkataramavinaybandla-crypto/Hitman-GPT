@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hitman-GPT // 4D Latent Manifold Atlas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  :root {
+    --bg-base:#0f0e0d; --bg-surface-1:#161514; --bg-surface-2:#1c1a18;
+    --border-hairline:rgba(255,255,255,0.08); --border-subtle:rgba(255,255,255,0.04);
+    --accent:#d97736; --accent-subtle:rgba(217,119,54,0.15);
+    --text-primary:#e8e6e3; --text-secondary:#a8a5a0; --text-muted:#6b6863; --text-dim:#44423e;
+    --mono:'JetBrains Mono',monospace;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg-base); color:var(--text-secondary); font-family:'Instrument Sans',-apple-system,sans-serif; overflow:hidden; width:100vw; height:100vh; font-size:12px; line-height:1.5; }
+  .app-container { display:flex; flex-direction:column; width:100%; height:100%; }
+  header { height:44px; min-height:44px; border-bottom:1px solid var(--border-hairline); display:flex; align-items:center; justify-content:space-between; padding:0 16px; background:var(--bg-base); z-index:20; }
+  .header-title { font-size:13px; font-weight:600; color:var(--text-primary); display:flex; align-items:center; gap:8px; }
+  .header-title span { color:var(--text-muted); font-weight:400; }
+  .header-meta { display:flex; align-items:center; gap:14px; font-size:11px; color:var(--text-muted); }
+  .status-dot { width:6px; height:6px; border-radius:50%; background:var(--text-muted); display:inline-block; }
+  .status-dot.active { background:var(--accent); }
+  .main-layout { display:flex; flex:1; height:calc(100vh - 44px); overflow:hidden; }
+  .left-rail { width:230px; min-width:230px; border-right:1px solid var(--border-hairline); background:var(--bg-surface-1); padding:14px; display:flex; flex-direction:column; gap:16px; overflow-y:auto; z-index:10; }
+  .center-viewport { flex:1; position:relative; height:100%; overflow:hidden; }
+  #webgl-canvas { width:100%; height:100%; display:block; }
+  #overlay-svg { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:5; }
+  .right-editorial { width:360px; min-width:360px; border-left:1px solid var(--border-hairline); background:var(--bg-surface-1); padding:16px; display:flex; flex-direction:column; gap:16px; overflow-y:auto; z-index:10; }
+  .section-label { font-size:10px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px; }
+  .divider { height:1px; background:var(--border-hairline); width:100%; margin:2px 0; }
+  .slider-group { display:flex; flex-direction:column; gap:8px; }
+  .slider-item { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; }
+  .slider-item label { width:44px; color:var(--text-muted); font-family:var(--mono); font-size:10px; }
+  .slider-item input[type="range"] { flex:1; height:2px; accent-color:var(--text-primary); cursor:pointer; background:var(--border-hairline); border:none; outline:none; }
+  .slider-item .val { width:34px; text-align:right; font-family:var(--mono); color:var(--text-primary); font-size:10px; }
+  .toggle-list { display:flex; flex-direction:column; gap:4px; }
+  .toggle-row { display:flex; align-items:center; justify-content:space-between; padding:3px 0; font-size:11px; cursor:pointer; user-select:none; }
+  .toggle-row span { color:var(--text-secondary); }
+  .toggle-check { width:13px; height:13px; border:1px solid var(--border-hairline); border-radius:2px; display:flex; align-items:center; justify-content:center; }
+  .toggle-row.active .toggle-check { background:var(--text-primary); border-color:var(--text-primary); }
+  .toggle-row.active.accent-toggle .toggle-check { background:var(--accent); border-color:var(--accent); }
+  .toggle-check svg { width:9px; height:9px; fill:var(--bg-base); display:none; }
+  .toggle-row.active .toggle-check svg { display:block; }
+  .info-block { font-size:11px; color:var(--text-secondary); }
+  .info-row { display:flex; justify-content:space-between; padding:2px 0; font-family:var(--mono); }
+  .info-row .k { color:var(--text-muted); font-family:'Instrument Sans',sans-serif; font-size:10px; }
+  .footnote { font-size:10px; color:var(--text-muted); line-height:1.4; border-top:1px solid var(--border-subtle); padding-top:8px; }
+  .playback-dock { position:absolute; bottom:12px; left:16px; right:16px; background:var(--bg-surface-1); border:1px solid var(--border-hairline); border-radius:4px; padding:8px 12px; display:flex; flex-direction:column; gap:6px; z-index:10; }
+  .dock-controls { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .dock-left { display:flex; align-items:center; gap:8px; }
+  .dock-right { display:flex; align-items:center; gap:12px; font-size:11px; }
+  .btn-quiet { background:transparent; border:1px solid var(--border-hairline); color:var(--text-secondary); padding:2px 8px; border-radius:3px; cursor:pointer; font-size:11px; font-family:inherit; }
+  .btn-quiet:hover { color:var(--text-primary); border-color:var(--text-muted); }
+  .btn-quiet.active { color:var(--bg-base); background:var(--accent); border-color:var(--accent); font-weight:500; }
+  .btn-arm { color:var(--text-muted); cursor:pointer; padding:2px 6px; border-radius:2px; }
+  .btn-arm.active { color:var(--accent); font-weight:600; }
+  .btn-arm.active-ctrl { color:var(--text-primary); font-weight:600; }
+  select.select-quiet { background:var(--bg-surface-2); border:1px solid var(--border-hairline); color:var(--text-secondary); padding:2px 20px 2px 6px; border-radius:3px; font-size:11px; font-family:inherit; cursor:pointer; outline:none; appearance:none; -webkit-appearance:none; background-image:url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%23a8a5a0' d='M0 0l4 5 4-5z'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 6px center; }
+  .dock-slider { width:100%; height:2px; accent-color:var(--accent); background:var(--border-hairline); outline:none; cursor:pointer; }
+  .headline-card { display:flex; flex-direction:column; gap:6px; }
+  .headline-text { font-size:16px; font-weight:600; color:var(--text-primary); line-height:1.35; }
+  .headline-text .hl-accent { color:var(--accent); font-family:var(--mono); }
+  .headline-sub { font-size:11px; color:var(--text-muted); }
+  .metric-dual { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px; }
+  .metric-cell { background:var(--bg-surface-2); border:1px solid var(--border-hairline); padding:8px 10px; border-radius:3px; }
+  .metric-cell .label { font-size:10px; color:var(--text-muted); }
+  .metric-cell .value { font-size:14px; font-family:var(--mono); font-weight:600; color:var(--text-primary); margin-top:2px; }
+  .metric-cell.accent-cell .value { color:var(--accent); }
+  #forest-svg { width:100%; height:160px; display:block; margin-top:4px; }
+  #loss-canvas { width:100%; height:135px; display:block; margin-top:6px; }
+  .hud-legend { position:absolute; top:12px; left:16px; background:rgba(22,21,20,0.85); border:1px solid var(--border-hairline); border-radius:3px; padding:6px 10px; font-size:10px; z-index:5; display:flex; gap:12px; color:var(--text-muted); }
+  .legend-item { display:flex; align-items:center; gap:5px; }
+  .legend-line { width:12px; height:1px; }
+  .legend-dot { width:5px; height:5px; border-radius:50%; }
+  .load-error { position:fixed; top:52px; left:50%; transform:translateX(-50%); z-index:60; background:var(--bg-surface-2); border:1px solid var(--accent); color:var(--text-primary); font-family:var(--mono); font-size:11px; line-height:1.5; padding:8px 14px; border-radius:3px; max-width:min(760px,84vw); white-space:pre-wrap; display:none; }
+  .load-error.notice { border-color:var(--border-hairline); color:var(--text-secondary); }
+  .drop-overlay { position:fixed; inset:0; z-index:70; display:none; align-items:center; justify-content:center; background:rgba(15,14,13,0.88); border:2px dashed var(--accent); color:var(--text-primary); font-family:var(--mono); font-size:13px; pointer-events:none; }
+</style>
+</head>
+<body>
+<div class="app-container">
+  <header>
+    <div class="header-title">Hitman-GPT <span>/ 4D Latent Manifold Atlas</span></div>
+    <div class="header-meta">
+      <button class="btn-quiet" id="btn-import">Import JSON</button>
+      <input type="file" id="file-input" accept=".json,application/json" style="display:none;">
+      <div><span class="status-dot" id="dot-status"></span> <span id="label-status">Loading&hellip;</span></div>
+      <div style="font-family:var(--mono);">N=72 runs &middot; seed 0 val</div>
+    </div>
+  </header>
+  <div class="main-layout">
+    <div class="left-rail">
+      <div>
+        <div class="section-label">4D Projection</div>
+        <div class="slider-group">
+          <div class="slider-item"><label>X-W</label><input type="range" id="rot-xw" min="0" max="6.28" step="0.01" value="0.5"><span class="val" id="val-xw">0.50</span></div>
+          <div class="slider-item"><label>Y-W</label><input type="range" id="rot-yw" min="0" max="6.28" step="0.01" value="0.3"><span class="val" id="val-yw">0.30</span></div>
+          <div class="slider-item"><label>Z-W</label><input type="range" id="rot-zw" min="0" max="6.28" step="0.01" value="0.0"><span class="val" id="val-zw">0.00</span></div>
+          <div class="slider-item"><label>Depth</label><input type="range" id="proj-depth" min="1.8" max="6.0" step="0.1" value="3.2"><span class="val" id="val-depth">3.2</span></div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="section-label">Manifold Layers</div>
+        <div class="toggle-list">
+          <div class="toggle-row active" data-layer="tess"><span>Tesseract edges</span><div class="toggle-check"><svg viewBox="0 0 10 10"><path d="M2 5l2 2 4-4"/></svg></div></div>
+          <div class="toggle-row active accent-toggle" data-layer="held"><span>Held-out edges</span><div class="toggle-check"><svg viewBox="0 0 10 10"><path d="M2 5l2 2 4-4"/></svg></div></div>
+          <div class="toggle-row active" data-layer="worm"><span>Wormholes (arcs)</span><div class="toggle-check"><svg viewBox="0 0 10 10"><path d="M2 5l2 2 4-4"/></svg></div></div>
+          <div class="toggle-row active accent-toggle" data-layer="walk"><span>Walk path</span><div class="toggle-check"><svg viewBox="0 0 10 10"><path d="M2 5l2 2 4-4"/></svg></div></div>
+          <div class="toggle-row active" data-layer="rays"><span>Top-5 candidate rays</span><div class="toggle-check"><svg viewBox="0 0 10 10"><path d="M2 5l2 2 4-4"/></svg></div></div>
+          <div class="toggle-row active" data-layer="conf"><span>Conformal set bound</span><div class="toggle-check"><svg viewBox="0 0 10 10"><path d="M2 5l2 2 4-4"/></svg></div></div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="section-label">Selected Node</div>
+        <div class="info-block">
+          <div class="info-row"><span class="k">Identifier</span><span id="insp-tok">Node 0</span></div>
+          <div class="info-row"><span class="k">4D Coords</span><span id="insp-coord">(0,0,0,0)</span></div>
+          <div class="info-row"><span class="k">Wormhole link</span><span id="insp-wh">None</span></div>
+          <div class="info-row"><span class="k">Held-out edges</span><span id="insp-held">0</span></div>
+          <div class="info-row"><span class="k">Step loss</span><span id="insp-loss">--</span></div>
+        </div>
+      </div>
+      <div class="footnote">Wormholes are flag-only; random walks never traverse them.</div>
+    </div>
+    <div class="center-viewport">
+      <canvas id="webgl-canvas"></canvas>
+      <svg id="overlay-svg"></svg>
+      <div class="hud-legend">
+        <div class="legend-item"><div class="legend-line" style="background:var(--accent);"></div><span>Full-Hybrid</span></div>
+        <div class="legend-item"><div class="legend-line" style="background:#55524e;"></div><span>Control / Lattice</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#888;"></div><span>Node</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--accent);"></div><span>Active / Wormhole</span></div>
+      </div>
+      <div class="playback-dock">
+        <div class="dock-controls">
+          <div class="dock-left">
+            <select id="seq-select" class="select-quiet"></select>
+            <button class="btn-quiet" id="btn-prev">Prev</button>
+            <button class="btn-quiet" id="btn-play">Play</button>
+            <button class="btn-quiet" id="btn-next">Next</button>
+            <span id="step-label" style="font-family:var(--mono); color:var(--text-primary); font-size:11px; margin-left:4px;">Step 00 / 00</span>
+          </div>
+          <div class="dock-right">
+            <span>Model:</span>
+            <span class="btn-arm active" id="btn-arm-fh">Full-Hybrid</span>
+            <span class="btn-arm" id="btn-arm-hc">Control</span>
+            <select id="speed-select" class="select-quiet" style="margin-left:6px;">
+              <option value="1000">0.5x</option><option value="500" selected>1.0x</option><option value="250">2.0x</option>
+            </select>
+          </div>
+        </div>
+        <input type="range" id="walk-scrub" class="dock-slider" min="0" max="23" value="0">
+        <div style="display:flex; justify-content:space-between; font-size:10px; font-family:var(--mono); color:var(--text-muted); margin-top:2px;">
+          <span id="step-transition">(0,0,0,0) &rarr; (0,0,0,0)</span>
+          <span id="step-mask">train_edge</span>
+          <span id="step-stats">Loss: -- | Top-1 p: --</span>
+        </div>
+      </div>
+    </div>
+    <div class="right-editorial">
+      <div class="headline-card">
+        <div class="section-label">Key Result</div>
+        <div class="headline-text" id="headline-dyn">Full-Hybrid beats control by <span class="hl-accent">0.246</span> nats on held-out edges (95% CI -0.448 to -0.044).</div>
+        <div class="headline-sub">Paired difference across 9 matched seeds (df = 8).</div>
+      </div>
+      <div class="metric-dual">
+        <div class="metric-cell accent-cell"><div class="label">Full-Hybrid val loss</div><div class="value" id="val-fh-loss">--</div></div>
+        <div class="metric-cell"><div class="label">Hybrid-Control val loss</div><div class="value" id="val-hc-loss">--</div></div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="section-label">Forest Plot: Paired Differences (&Delta; Loss, 95% CI)</div>
+        <svg id="forest-svg"></svg>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="section-label">Conformal Prediction (&alpha; = 0.10, Target 90%)</div>
+        <div class="info-block">
+          <div class="info-row"><span class="k">Held-out coverage</span><span id="conf-held-cov" style="color:var(--text-primary);">--</span></div>
+          <div class="info-row"><span class="k">Held-out mean set size</span><span id="conf-held-sz">--</span></div>
+          <div class="info-row"><span class="k">Train-edge coverage</span><span id="conf-edge-cov" style="color:var(--text-primary);">--</span></div>
+          <div class="info-row"><span class="k">Train-edge mean set size</span><span id="conf-edge-sz">--</span></div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="section-label">Loss Trajectories</div>
+        <canvas id="loss-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="load-error" id="load-error"></div>
+<div class="drop-overlay" id="drop-overlay">Drop results.json to load</div>
+<script>
+class SimpleOrbitControls {
+  constructor(cam, dom) {
+    this.cam = cam; this.dom = dom; this.target = new THREE.Vector3(0,0,0);
+    this.radius = 16.5; this.theta = 0.85; this.phi = 0.65;
+    this.isDrag = false; this.isPan = false; this.prev = {x:0, y:0};
+    this.update(); this.bind();
+  }
+  bind() {
+    this.dom.addEventListener('mousedown', e => { this.isDrag = e.button === 0; this.isPan = e.button === 2 || e.shiftKey; this.prev = {x:e.clientX, y:e.clientY}; });
+    window.addEventListener('mousemove', e => {
+      if (!this.isDrag && !this.isPan) return;
+      const dx = e.clientX - this.prev.x, dy = e.clientY - this.prev.y;
+      this.prev = {x:e.clientX, y:e.clientY};
+      if (this.isPan) {
+        const factor = this.radius * 0.0012, fwd = new THREE.Vector3().subVectors(this.cam.position, this.target).normalize();
+        const rt = new THREE.Vector3().crossVectors(fwd, this.cam.up).normalize();
+        this.target.addScaledVector(rt, -dx * factor); this.target.addScaledVector(this.cam.up, dy * factor);
+      } else {
+        this.phi -= dx * 0.006; this.theta = Math.max(0.05, Math.min(Math.PI - 0.05, this.theta - dy * 0.006));
+      }
+      this.update();
+    });
+    window.addEventListener('mouseup', () => { this.isDrag = false; this.isPan = false; });
+    this.dom.addEventListener('wheel', e => { e.preventDefault(); this.radius = Math.max(4, Math.min(60, this.radius + e.deltaY * 0.02)); this.update(); }, {passive:false});
+    this.dom.addEventListener('contextmenu', e => e.preventDefault());
+  }
+  update() {
+    const sT = Math.sin(this.theta);
+    this.cam.position.set(this.target.x + this.radius * sT * Math.sin(this.phi), this.target.y + this.radius * Math.cos(this.theta), this.target.z + this.radius * sT * Math.cos(this.phi));
+    this.cam.lookAt(this.target);
+  }
+}
+
+let scene, camera, renderer, controls, raycaster, mouse;
+let G_DATA = null, nodeMeshes = [], nodePosMap = new Map();
+let tessLines, heldLines, wormGroup, walkLine, haloMesh, rayGroup, confGroup;
+let curWalkSeqIdx = 0, curStep = 0, isPlaying = false, playTimer = null;
+let activeArm = 'Full-Hybrid', selectedTok = 0;
+let layers = { tess:true, held:true, worm:true, walk:true, rays:true, conf:true };
+
+function init() {
+  const canvas = document.getElementById('webgl-canvas');
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x0f0e0d, 0.018);
+  const rect = canvas.getBoundingClientRect();
+  camera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 200);
+  renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:false });
+  renderer.setSize(rect.width, rect.height);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x0f0e0d, 1);
+  controls = new SimpleOrbitControls(camera, canvas);
+  raycaster = new THREE.Raycaster();
+  raycaster.params.Points = { threshold:0.35 };
+  mouse = new THREE.Vector2();
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.45);
+  dirLight.position.set(10, 20, 15);
+  scene.add(dirLight);
+
+  const gridHelper = new THREE.PolarGridHelper(10, 4, 8, 32, 0x242220, 0x1a1918);
+  gridHelper.position.y = -3.5;
+  scene.add(gridHelper);
+
+  window.addEventListener('resize', onResize);
+  canvas.addEventListener('click', onClick);
+  setupEvents();
+  loadData();
+}
+
+function onResize() {
+  const canvas = document.getElementById('webgl-canvas');
+  const rect = canvas.getBoundingClientRect();
+  camera.aspect = rect.width / rect.height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(rect.width, rect.height);
+  renderLossChart();
+  renderForestPlot();
+}
+
+function project4D(coord, xw, yw, zw, depth) {
+  const d = G_DATA.dims || [3,3,3,3];
+  let x = coord[0] - (d[0]-1)/2, y = coord[1] - (d[1]-1)/2, z = coord[2] - (d[2]-1)/2, w = coord[3] - (d[3]-1)/2;
+  let x1 = x * Math.cos(xw) - w * Math.sin(xw), w1 = x * Math.sin(xw) + w * Math.cos(xw);
+  let y1 = y * Math.cos(yw) - w1 * Math.sin(yw), w2 = y * Math.sin(yw) + w1 * Math.cos(yw);
+  let z1 = z * Math.cos(zw) - w2 * Math.sin(zw), w3 = z * Math.sin(zw) + w2 * Math.cos(zw);
+  const factor = depth / Math.max(0.4, depth - w3 * 0.7);
+  return new THREE.Vector3(x1 * factor * 2.4, y1 * factor * 2.4, z1 * factor * 2.4);
+}
+
+function get4DParams() {
+  return {
+    xw: parseFloat(document.getElementById('rot-xw').value),
+    yw: parseFloat(document.getElementById('rot-yw').value),
+    zw: parseFloat(document.getElementById('rot-zw').value),
+    depth: parseFloat(document.getElementById('proj-depth').value)
+  };
+}
+
+function updatePositions() {
+  if (!G_DATA) return;
+  const { xw, yw, zw, depth } = get4DParams();
+  nodePosMap.clear();
+  for (let m of nodeMeshes) {
+    const v3 = project4D(m.userData.coord, xw, yw, zw, depth);
+    m.position.copy(v3);
+    nodePosMap.set(m.userData.token, v3);
+  }
+  updateEdges(tessLines, G_DATA.train_edges);
+  updateEdges(heldLines, G_DATA.held_out_edges);
+  updateWormholes();
+  updateWalkStep();
+}
+
+function updateEdges(lineObj, edgesList) {
+  if (!lineObj) return;
+  const pos = lineObj.geometry.attributes.position.array;
+  let idx = 0;
+  for (let [u, v] of (edgesList || [])) {
+    const pu = nodePosMap.get(u), pv = nodePosMap.get(v);
+    if (pu && pv) {
+      pos[idx++] = pu.x; pos[idx++] = pu.y; pos[idx++] = pu.z;
+      pos[idx++] = pv.x; pos[idx++] = pv.y; pos[idx++] = pv.z;
+    }
+  }
+  lineObj.geometry.attributes.position.needsUpdate = true;
+}
+
+function buildGraph() {
+  while (scene.children.length > 4) scene.remove(scene.children[scene.children.length - 1]);
+  nodeMeshes = [];
+  nodePosMap.clear();
+
+  const geom = new THREE.SphereGeometry(0.14, 12, 12);
+  const noiseId = G_DATA.noise_token_id;
+
+  for (let [tokStr, coord] of Object.entries(G_DATA.token_to_coord)) {
+    const tok = parseInt(tokStr, 10);
+    if (tok === noiseId) continue;
+    const mat = new THREE.MeshBasicMaterial({ color: 0x4f4c47 });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.userData = { token: tok, coord };
+    scene.add(mesh);
+    nodeMeshes.push(mesh);
+  }
+
+  haloMesh = new THREE.Mesh(
+    new THREE.RingGeometry(0.24, 0.28, 24),
+    new THREE.MeshBasicMaterial({ color: 0xe8e6e3, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
+  );
+  haloMesh.visible = false;
+  scene.add(haloMesh);
+
+  wormGroup = new THREE.Group(); scene.add(wormGroup);
+  rayGroup = new THREE.Group(); scene.add(rayGroup);
+  confGroup = new THREE.Group(); scene.add(confGroup);
+
+  const { xw, yw, zw, depth } = get4DParams();
+  for (let m of nodeMeshes) {
+    const v3 = project4D(m.userData.coord, xw, yw, zw, depth);
+    m.position.copy(v3);
+    nodePosMap.set(m.userData.token, v3);
+  }
+
+  tessLines = createLines(G_DATA.train_edges, 0x5a5650, 0.10, false);
+  tessLines.visible = layers.tess; scene.add(tessLines);
+
+  heldLines = createLines(G_DATA.held_out_edges, 0x8f8a82, 0.35, true);
+  heldLines.visible = layers.held; scene.add(heldLines);
+
+  initWormholes();
+  walkLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xd97736, linewidth: 2 }));
+  walkLine.visible = layers.walk; scene.add(walkLine);
+}
+
+function createLines(pairs, color, opacity, isHeld) {
+  const pts = [];
+  for (let [u, v] of (pairs || [])) {
+    const pu = nodePosMap.get(u), pv = nodePosMap.get(v);
+    if (pu && pv) pts.push(pu.x, pu.y, pu.z, pv.x, pv.y, pv.z);
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  return new THREE.LineSegments(geom, new THREE.LineBasicMaterial({ color, transparent: true, opacity, linewidth: 1 }));
+}
+
+function initWormholes() {
+  while (wormGroup.children.length > 0) wormGroup.remove(wormGroup.children[0]);
+  const markerGeom = new THREE.SphereGeometry(0.06, 8, 8);
+  const markerMat = new THREE.MeshBasicMaterial({ color: 0x8a847c });
+
+  for (let [u, v] of (G_DATA.wormhole_pairs || [])) {
+    const pu = nodePosMap.get(u), pv = nodePosMap.get(v);
+    if (!pu || !pv) continue;
+    const mid = new THREE.Vector3().addVectors(pu, pv).multiplyScalar(0.5);
+    mid.y += Math.max(1.0, pu.distanceTo(pv) * 0.35);
+    const curve = new THREE.QuadraticBezierCurve3(pu, mid, pv);
+    const geom = new THREE.BufferGeometry().setFromPoints(curve.getPoints(24));
+    const mat = new THREE.LineBasicMaterial({ color: 0x736e67, transparent: true, opacity: 0.65 });
+    const line = new THREE.Line(geom, mat);
+    line.userData = { u, v };
+    wormGroup.add(line);
+
+    const m1 = new THREE.Mesh(markerGeom, markerMat); m1.position.copy(pu); wormGroup.add(m1);
+    const m2 = new THREE.Mesh(markerGeom, markerMat); m2.position.copy(pv); wormGroup.add(m2);
+  }
+  wormGroup.visible = layers.worm;
+}
+
+function updateWormholes() {
+  for (let child of wormGroup.children) {
+    if (child.isLine) {
+      const pu = nodePosMap.get(child.userData.u), pv = nodePosMap.get(child.userData.v);
+      if (!pu || !pv) continue;
+      const mid = new THREE.Vector3().addVectors(pu, pv).multiplyScalar(0.5);
+      mid.y += Math.max(1.0, pu.distanceTo(pv) * 0.35);
+      child.geometry.setFromPoints(new THREE.QuadraticBezierCurve3(pu, mid, pv).getPoints(24));
+    }
+  }
+}
+
+function updateWalkStep() {
+  if (!G_DATA || !G_DATA.val_sequences || !G_DATA.val_sequences[curWalkSeqIdx]) return;
+  const seq = G_DATA.val_sequences[curWalkSeqIdx];
+  const maxSteps = seq.tokens.length - 1;
+  curStep = Math.max(0, Math.min(curStep, maxSteps));
+  document.getElementById('walk-scrub').max = maxSteps;
+  document.getElementById('walk-scrub').value = curStep;
+  document.getElementById('step-label').textContent = `Step ${String(curStep).padStart(2,'0')} / ${String(maxSteps).padStart(2,'0')}`;
+
+  const curTok = seq.tokens[curStep], tgtTok = seq.targets[curStep];
+  const curPos = nodePosMap.get(curTok), tgtPos = nodePosMap.get(tgtTok);
+  const maskType = seq.masks[curStep];
+
+  const selPos = nodePosMap.get(selectedTok);
+  if (selPos) {
+    haloMesh.position.copy(selPos);
+    haloMesh.lookAt(camera.position);
+    haloMesh.visible = true;
+  } else { haloMesh.visible = false; }
+
+  for (let m of nodeMeshes) {
+    const t = m.userData.token;
+    if (t === curTok) m.material.color.setHex(activeArm === 'Full-Hybrid' ? 0xd97736 : 0xe8e6e3);
+    else if (t === tgtTok) m.material.color.setHex(0xe8e6e3);
+    else if (t === selectedTok) m.material.color.setHex(0xa8a5a0);
+    else m.material.color.setHex(0x383531);
+  }
+
+  const pathPts = [];
+  for (let s = 0; s <= curStep; s++) {
+    const p = nodePosMap.get(seq.tokens[s]);
+    if (p) pathPts.push(p);
+  }
+  if (pathPts.length > 1) {
+    walkLine.geometry.setFromPoints(pathPts);
+    walkLine.material.color.setHex(activeArm === 'Full-Hybrid' ? 0xd97736 : 0xa8a5a0);
+    walkLine.visible = layers.walk;
+  } else { walkLine.visible = false; }
+
+  const modelData = activeArm === 'Full-Hybrid' ? seq.full_hybrid[curStep] : seq.hybrid_control[curStep];
+  updateRays(curPos, modelData ? modelData.top5 : [], tgtTok);
+  updateConformalVis(tgtPos);
+
+  const curCoord = G_DATA.token_to_coord[curTok] || [0,0,0,0], tgtCoord = G_DATA.token_to_coord[tgtTok] || [0,0,0,0];
+  document.getElementById('step-transition').textContent = `(${curCoord.join(',')}) \u2192 (${tgtCoord.join(',')})`;
+  document.getElementById('step-mask').textContent = maskType;
+  const top1Prob = modelData && modelData.top5[0] ? modelData.top5[0].prob : 0;
+  const stepLoss = modelData ? modelData.loss : 0;
+  document.getElementById('step-stats').textContent = `Loss: ${stepLoss.toFixed(4)} | Top-1 p: ${(top1Prob * 100).toFixed(1)}%`;
+
+  populateInspector(selectedTok, curStep);
+  updateLeaderLines(curTok, tgtTok, selectedTok);
+}
+
+function updateRays(curPos, top5, trueTarget) {
+  while (rayGroup.children.length > 0) rayGroup.remove(rayGroup.children[0]);
+  if (!layers.rays || !curPos) return;
+  top5.forEach((pred, rank) => {
+    const tPos = nodePosMap.get(pred.token);
+    if (!tPos) return;
+    const isTrue = pred.token === trueTarget;
+    const geom = new THREE.BufferGeometry().setFromPoints([curPos, tPos]);
+    const color = isTrue ? 0xe8e6e3 : (rank === 0 ? (activeArm === 'Full-Hybrid' ? 0xd97736 : 0xa8a5a0) : 0x4f4c47);
+    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: Math.max(0.12, pred.prob * 0.9), linewidth: 1 });
+    rayGroup.add(new THREE.Line(geom, mat));
+  });
+}
+
+function updateConformalVis(tgtPos) {
+  while (confGroup.children.length > 0) confGroup.remove(confGroup.children[0]);
+  if (!layers.conf || !tgtPos) return;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.32, 0.36, 24),
+    new THREE.MeshBasicMaterial({ color: 0x8a857e, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
+  );
+  ring.position.copy(tgtPos);
+  ring.lookAt(camera.position);
+  confGroup.add(ring);
+}
+
+function toScreen(v3) {
+  const canvas = document.getElementById('webgl-canvas');
+  const rect = canvas.getBoundingClientRect();
+  const v = v3.clone().project(camera);
+  return { x: (v.x * 0.5 + 0.5) * rect.width, y: (-(v.y * 0.5) + 0.5) * rect.height, visible: v.z < 1 };
+}
+
+function updateLeaderLines(curTok, tgtTok, selTok) {
+  const svg = document.getElementById('overlay-svg');
+  if (!svg) return;
+  svg.innerHTML = '';
+  const nodesToLabel = [ { tok: curTok, label: 'Current node' }, { tok: tgtTok, label: 'Target node' } ];
+  if (selTok !== curTok && selTok !== tgtTok) nodesToLabel.push({ tok: selTok, label: `Selected (#${selTok})` });
+
+  nodesToLabel.forEach((item, idx) => {
+    const pos = nodePosMap.get(item.tok);
+    if (!pos) return;
+    const sp = toScreen(pos);
+    if (!sp.visible) return;
+    const ox = idx % 2 === 0 ? 30 : -30, oy = idx < 2 ? -25 : 25;
+    const tx = sp.x + ox, ty = sp.y + oy;
+
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', sp.x); line.setAttribute('y1', sp.y);
+    line.setAttribute('x2', tx); line.setAttribute('y2', ty);
+    line.setAttribute('stroke', '#6b6863'); line.setAttribute('stroke-width', '1');
+    svg.appendChild(line);
+
+    const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txt.setAttribute('x', tx + (ox > 0 ? 4 : -4)); txt.setAttribute('y', ty + 3);
+    txt.setAttribute('fill', '#a8a5a0'); txt.setAttribute('font-size', '10');
+    txt.setAttribute('font-family', 'Instrument Sans, sans-serif');
+    txt.setAttribute('text-anchor', ox > 0 ? 'start' : 'end');
+    txt.textContent = item.label;
+    svg.appendChild(txt);
+  });
+}
+
+function onClick(e) {
+  const canvas = document.getElementById('webgl-canvas');
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(nodeMeshes);
+  if (hits.length > 0) {
+    selectedTok = hits[0].object.userData.token;
+    updateWalkStep();
+  }
+}
+
+function populateInspector(tok, step) {
+  const coord = G_DATA.token_to_coord[tok] || [0,0,0,0];
+  document.getElementById('insp-tok').textContent = `Node ${tok}`;
+  document.getElementById('insp-coord').textContent = `(${coord.join(',')})`;
+  let wh = 'None';
+  for (let [u, v] of (G_DATA.wormhole_pairs || [])) {
+    if (u === tok) wh = `#${v} (${G_DATA.token_to_coord[v].join(',')})`;
+    if (v === tok) wh = `#${u} (${G_DATA.token_to_coord[u].join(',')})`;
+  }
+  document.getElementById('insp-wh').textContent = wh;
+  let heldCount = 0;
+  for (let [u, v] of (G_DATA.held_out_edges || [])) if (u === tok || v === tok) heldCount++;
+  document.getElementById('insp-held').textContent = heldCount > 0 ? `${heldCount} edges` : '0';
+
+  let stepLossStr = '--';
+  if (G_DATA.val_sequences && G_DATA.val_sequences[curWalkSeqIdx]) {
+    const seq = G_DATA.val_sequences[curWalkSeqIdx];
+    if (seq.tokens[step] === tok) {
+      stepLossStr = `FH: ${seq.full_hybrid[step].loss.toFixed(3)} | Ctrl: ${seq.hybrid_control[step].loss.toFixed(3)}`;
+    }
+  }
+  document.getElementById('insp-loss').textContent = stepLossStr;
+}
+
+function setupEvents() {
+  ['rot-xw', 'rot-yw', 'rot-zw', 'proj-depth'].forEach(id => {
+    document.getElementById(id).addEventListener('input', e => {
+      document.getElementById('val-' + id.split('-')[1]).textContent = parseFloat(e.target.value).toFixed(2);
+      updatePositions();
+    });
+  });
+  document.querySelectorAll('.toggle-row').forEach(row => {
+    row.addEventListener('click', () => {
+      row.classList.toggle('active');
+      const l = row.dataset.layer;
+      layers[l] = row.classList.contains('active');
+      if (l === 'tess' && tessLines) tessLines.visible = layers.tess;
+      if (l === 'held' && heldLines) heldLines.visible = layers.held;
+      if (l === 'worm' && wormGroup) wormGroup.visible = layers.worm;
+      if (l === 'walk' && walkLine) walkLine.visible = layers.walk;
+      if (l === 'rays' && rayGroup) rayGroup.visible = layers.rays;
+      if (l === 'conf' && confGroup) confGroup.visible = layers.conf;
+      updateWalkStep();
+    });
+  });
+  const btnPlay = document.getElementById('btn-play');
+  btnPlay.addEventListener('click', () => {
+    isPlaying = !isPlaying;
+    btnPlay.textContent = isPlaying ? 'Pause' : 'Play';
+    btnPlay.classList.toggle('active', isPlaying);
+    if (isPlaying) playTimer = setInterval(stepForward, parseInt(document.getElementById('speed-select').value, 10));
+    else clearInterval(playTimer);
+  });
+  document.getElementById('btn-next').addEventListener('click', stepForward);
+  document.getElementById('btn-prev').addEventListener('click', () => { curStep = Math.max(0, curStep - 1); updateWalkStep(); });
+  document.getElementById('walk-scrub').addEventListener('input', e => { curStep = parseInt(e.target.value, 10); updateWalkStep(); });
+  document.getElementById('speed-select').addEventListener('change', e => {
+    if (isPlaying) { clearInterval(playTimer); playTimer = setInterval(stepForward, parseInt(e.target.value, 10)); }
+  });
+  document.getElementById('seq-select').addEventListener('change', e => { curWalkSeqIdx = parseInt(e.target.value, 10); curStep = 0; updateWalkStep(); });
+  document.getElementById('btn-arm-fh').addEventListener('click', () => {
+    activeArm = 'Full-Hybrid';
+    document.getElementById('btn-arm-fh').className = 'btn-arm active';
+    document.getElementById('btn-arm-hc').className = 'btn-arm';
+    updateWalkStep();
+  });
+  document.getElementById('btn-arm-hc').addEventListener('click', () => {
+    activeArm = 'Hybrid-Control';
+    document.getElementById('btn-arm-hc').className = 'btn-arm active-ctrl';
+    document.getElementById('btn-arm-fh').className = 'btn-arm';
+    updateWalkStep();
+  });
+  document.getElementById('btn-import').addEventListener('click', () => document.getElementById('file-input').click());
+  document.getElementById('file-input').addEventListener('change', e => { handleImportFile(e.target.files[0]); e.target.value = ''; });
+  window.addEventListener('dragover', e => { e.preventDefault(); document.getElementById('drop-overlay').style.display = 'flex'; });
+  window.addEventListener('dragleave', e => { if (e.clientX === 0 && e.clientY === 0) document.getElementById('drop-overlay').style.display = 'none'; });
+  window.addEventListener('drop', e => {
+    e.preventDefault();
+    document.getElementById('drop-overlay').style.display = 'none';
+    handleImportFile(e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files[0] : null);
+  });
+}
+
+function stepForward() {
+  if (!G_DATA || !G_DATA.val_sequences) return;
+  const seq = G_DATA.val_sequences[curWalkSeqIdx];
+  if (!seq) return;
+  curStep = curStep >= seq.tokens.length - 1 ? 0 : curStep + 1;
+  updateWalkStep();
+}
+
+function showLoadError(msg, isNotice) {
+  const el = document.getElementById('load-error');
+  el.textContent = msg;
+  el.classList.toggle('notice', !!isNotice);
+  el.style.display = 'block';
+  document.getElementById('dot-status').classList.remove('active');
+  document.getElementById('label-status').textContent = isNotice ? 'Waiting for data' : 'Load failed';
+}
+
+function clearLoadError() {
+  document.getElementById('load-error').style.display = 'none';
+}
+
+function applyData(data, sourceLabel) {
+  try {
+    G_DATA = data;
+    clearLoadError();
+    onDataReady();
+    document.getElementById('label-status').textContent = sourceLabel;
+    document.getElementById('dot-status').classList.add('active');
+  } catch (err) {
+    showLoadError('Failed to apply data: ' + (err && err.message ? err.message : String(err)));
+  }
+}
+
+function handleImportFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      applyData(JSON.parse(reader.result), 'Imported ' + file.name);
+    } catch (err) {
+      showLoadError('Could not parse ' + file.name + ': ' + (err && err.message ? err.message : String(err)));
+    }
+  };
+  reader.onerror = () => showLoadError('Could not read ' + file.name + ': ' + (reader.error && reader.error.message ? reader.error.message : 'unknown read error'));
+  reader.readAsText(file);
+}
+
+function loadData() {
+  if (window.location.protocol === 'file:') {
+    showLoadError('viz.html was opened via file:// \u2014 browsers block loading results.json this way. '
+      + 'Serve this folder over HTTP instead, e.g. run "python -m http.server" here and open http://localhost:8000/viz.html. '
+      + 'Alternatively use the Import JSON button or drop results.json anywhere on this page.', true);
+    return;
+  }
+  fetch('results.json')
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status + ' while fetching results.json \u2014 is it next to viz.html?'); return r.json(); })
+    .then(data => applyData(data, 'Real run data loaded'))
+    .catch(err => showLoadError('Could not load results.json: ' + (err && err.message ? err.message : String(err))));
+}
+
+function onDataReady() {
+  document.getElementById('label-status').textContent = 'Real run data loaded';
+  document.getElementById('dot-status').classList.add('active');
+  const sel = document.getElementById('seq-select');
+  sel.innerHTML = '';
+  (G_DATA.val_sequences || []).forEach((s, idx) => {
+    const opt = document.createElement('option');
+    opt.value = idx; opt.textContent = `Seq ${String(idx).padStart(2,'0')} (${s.tokens.length} steps)`;
+    sel.appendChild(opt);
+  });
+  buildGraph();
+  populateEditorial();
+  renderLossChart();
+  renderForestPlot();
+  updateWalkStep();
+}
+
+function populateEditorial() {
+  const pm = G_DATA.per_arm_metrics || {};
+  const fh = pm['Full-Hybrid'] || {}, hc = pm['Hybrid-Control'] || {};
+  const fhLossM = fh.val_losses ? (fh.val_losses.reduce((a,b)=>a+b,0)/fh.val_losses.length).toFixed(4) : '--';
+  const hcLossM = hc.val_losses ? (hc.val_losses.reduce((a,b)=>a+b,0)/hc.val_losses.length).toFixed(4) : '--';
+  document.getElementById('val-fh-loss').textContent = `${fhLossM} nats`;
+  document.getElementById('val-hc-loss').textContent = `${hcLossM} nats`;
+
+  if (fh.val_losses && hc.val_losses) {
+    const diffs = fh.val_losses.map((v, i) => v - hc.val_losses[i]);
+    const m = diffs.reduce((a,b)=>a+b,0)/diffs.length;
+    const sd = Math.sqrt(diffs.reduce((a,b)=>a+(b-m)**2,0)/(diffs.length-1));
+    const se = sd / Math.sqrt(diffs.length);
+    const ciLow = (m - 2.3060 * se).toFixed(3), ciHigh = (m + 2.3060 * se).toFixed(3);
+    const absDiff = Math.abs(m).toFixed(3);
+    document.getElementById('headline-dyn').innerHTML =
+      `Full-Hybrid beats control by <span class="hl-accent">${absDiff}</span> nats on held-out edges (95% CI ${ciLow} to ${ciHigh}).`;
+  }
+
+  const conf = (G_DATA.conformal_results || {})['Full-Hybrid'] || {};
+  const held = conf['held-out-mask'] || {}, edge = conf['train-edge-mask'] || {};
+  document.getElementById('conf-held-cov').textContent = held.coverage || '--';
+  document.getElementById('conf-held-sz').textContent = held.mean_size ? `${held.mean_size} nodes` : '--';
+  document.getElementById('conf-edge-cov').textContent = edge.coverage || '--';
+  document.getElementById('conf-edge-sz').textContent = edge.mean_size ? `${edge.mean_size} nodes` : '--';
+}
+
+function renderForestPlot() {
+  const svg = document.getElementById('forest-svg');
+  if (!svg || !G_DATA) return;
+  svg.innerHTML = '';
+  const pm = G_DATA.per_arm_metrics || {};
+  const comparisons = [
+    { label: 'Full-Hybrid vs Control', a: 'Full-Hybrid', b: 'Hybrid-Control', isKey: true },
+    { label: 'Full-Hybrid vs Matched', a: 'Full-Hybrid', b: 'Vanilla-Matched', isKey: true },
+    { label: 'Lattice vs Shuffled', a: 'Vanilla+Lattice', b: 'Lattice-Shuffled', isKey: false },
+    { label: 'Wormhole vs Random', a: 'Vanilla+Wormhole', b: 'Wormhole-Random', isKey: false }
+  ];
+
+  const dataRows = [];
+  let minVal = -0.5, maxVal = 0.2;
+
+  comparisons.forEach(c => {
+    const ma = pm[c.a], mb = pm[c.b];
+    if (ma && mb && ma.val_losses && mb.val_losses) {
+      const diffs = ma.val_losses.map((v, i) => v - mb.val_losses[i]);
+      const m = diffs.reduce((x, y) => x + y, 0) / diffs.length;
+      const sd = Math.sqrt(diffs.reduce((x, y) => x + (y - m) ** 2, 0) / (diffs.length - 1));
+      const se = sd / Math.sqrt(diffs.length);
+      const low = m - 2.3060 * se, high = m + 2.3060 * se;
+      minVal = Math.min(minVal, low); maxVal = Math.max(maxVal, high);
+      dataRows.push({ label: c.label, m, low, high, isKey: c.isKey });
+    }
+  });
+
+  if (dataRows.length === 0) return;
+  const W = svg.clientWidth || 328, H = 160;
+  const padL = 125, padR = 85, padT = 16, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const toX = val => padL + ((val - minVal) / (maxVal - minVal)) * plotW;
+
+  const zeroX = toX(0);
+  const zeroLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  zeroLine.setAttribute('x1', zeroX); zeroLine.setAttribute('y1', padT - 4);
+  zeroLine.setAttribute('x2', zeroX); zeroLine.setAttribute('y2', H - padB + 4);
+  zeroLine.setAttribute('stroke', '#44423e'); zeroLine.setAttribute('stroke-dasharray', '3,3');
+  svg.appendChild(zeroLine);
+
+  const zeroTxt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  zeroTxt.setAttribute('x', zeroX); zeroTxt.setAttribute('y', H - padB + 16);
+  zeroTxt.setAttribute('fill', '#6b6863'); zeroTxt.setAttribute('font-size', '9');
+  zeroTxt.setAttribute('font-family', 'JetBrains Mono, monospace');
+  zeroTxt.setAttribute('text-anchor', 'middle'); zeroTxt.textContent = '0.0';
+  svg.appendChild(zeroTxt);
+
+  const rowStep = plotH / dataRows.length;
+  dataRows.forEach((row, i) => {
+    const y = padT + i * rowStep + rowStep / 2;
+    const isSignificant = (row.high < 0 || row.low > 0);
+    const strokeCol = row.isKey && isSignificant ? '#d97736' : (isSignificant ? '#a8a5a0' : '#44423e');
+    const dotCol = row.isKey && isSignificant ? '#d97736' : (isSignificant ? '#e8e6e3' : '#6b6863');
+
+    const txtL = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txtL.setAttribute('x', padL - 8); txtL.setAttribute('y', y + 3);
+    txtL.setAttribute('fill', row.isKey ? '#e8e6e3' : '#a8a5a0');
+    txtL.setAttribute('font-size', '10'); txtL.setAttribute('font-family', 'Instrument Sans, sans-serif');
+    txtL.setAttribute('text-anchor', 'end'); txtL.textContent = row.label;
+    svg.appendChild(txtL);
+
+    const x1 = toX(row.low), x2 = toX(row.high);
+    const bar = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    bar.setAttribute('x1', x1); bar.setAttribute('y1', y);
+    bar.setAttribute('x2', x2); bar.setAttribute('y2', y);
+    bar.setAttribute('stroke', strokeCol); bar.setAttribute('stroke-width', row.isKey ? '1.5' : '1');
+    svg.appendChild(bar);
+
+    [x1, x2].forEach(tx => {
+      const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      tick.setAttribute('x1', tx); tick.setAttribute('y1', y - 3);
+      tick.setAttribute('x2', tx); tick.setAttribute('y2', y + 3);
+      tick.setAttribute('stroke', strokeCol);
+      svg.appendChild(tick);
+    });
+
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', toX(row.m)); dot.setAttribute('cy', y);
+    dot.setAttribute('r', row.isKey ? '3' : '2.5'); dot.setAttribute('fill', dotCol);
+    svg.appendChild(dot);
+
+    const num = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    num.setAttribute('x', W - 6); num.setAttribute('y', y + 3);
+    num.setAttribute('fill', row.isKey && isSignificant ? '#d97736' : '#6b6863');
+    num.setAttribute('font-size', '10'); num.setAttribute('font-family', 'JetBrains Mono, monospace');
+    num.setAttribute('text-anchor', 'end'); num.textContent = `${row.m > 0 ? '+' : ''}${row.m.toFixed(3)}`;
+    svg.appendChild(num);
+  });
+}
+
+function renderLossChart() {
+  const canvas = document.getElementById('loss-canvas');
+  if (!canvas || !G_DATA) return;
+  const ctx = canvas.getContext('2d'), rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * 2; canvas.height = rect.height * 2;
+  ctx.scale(2, 2);
+  const W = rect.width, H = rect.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const pm = G_DATA.per_arm_metrics || {};
+  const fhHist = (pm['Full-Hybrid'] || {}).eval_history || [];
+  const hcHist = (pm['Hybrid-Control'] || {}).eval_history || [];
+  const base = G_DATA.baselines || {};
+  const uLine = base.uniform_baseline || 4.41;
+  const oLine = (base.held_out && base.held_out.oracle_floor) || 2.15;
+
+  let maxL = Math.max(uLine, 6.0), minL = Math.max(0, Math.min(oLine - 0.5, 1.0));
+  for (let pt of [...fhHist, ...hcHist]) if (pt.val_loss) maxL = Math.max(maxL, pt.val_loss + 0.4);
+
+  const padL = 32, padR = 64, padT = 12, padB = 20;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const toY = val => padT + plotH * (1 - (val - minL) / (maxL - minL));
+
+  ctx.font = '9px "JetBrains Mono", monospace'; ctx.fillStyle = '#6b6863'; ctx.textAlign = 'right';
+  [minL, (minL + maxL)/2, maxL].forEach(v => {
+    const y = toY(v); ctx.fillText(v.toFixed(1), padL - 6, y + 3);
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y); ctx.stroke();
+  });
+
+  ctx.setLineDash([3, 3]);
+  ctx.strokeStyle = '#44423e'; ctx.beginPath(); ctx.moveTo(padL, toY(uLine)); ctx.lineTo(padL + plotW, toY(uLine)); ctx.stroke();
+  ctx.fillStyle = '#6b6863'; ctx.textAlign = 'left'; ctx.fillText('Uniform', padL + plotW + 6, toY(uLine) + 3);
+
+  ctx.strokeStyle = '#6b6863'; ctx.beginPath(); ctx.moveTo(padL, toY(oLine)); ctx.lineTo(padL + plotW, toY(oLine)); ctx.stroke();
+  ctx.fillText('Oracle floor', padL + plotW + 6, toY(oLine) + 3);
+  ctx.setLineDash([]);
+
+  function drawTrajectory(hist, color, label) {
+    if (!hist || hist.length === 0) return;
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
+    hist.forEach((pt, i) => {
+      const x = padL + (i / Math.max(1, hist.length - 1)) * plotW, y = toY(pt.val_loss);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    const lastY = toY(hist[hist.length - 1].val_loss);
+    ctx.fillStyle = color; ctx.fillText(label, padL + plotW + 6, lastY + 3);
+  }
+
+  drawTrajectory(hcHist, '#736e67', 'Control');
+  drawTrajectory(fhHist, '#d97736', 'Full-Hybrid');
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (haloMesh && haloMesh.visible) haloMesh.lookAt(camera.position);
+  renderer.render(scene, camera);
+  const curSeq = G_DATA && G_DATA.val_sequences ? G_DATA.val_sequences[curWalkSeqIdx] : null;
+  if (curSeq) {
+    updateLeaderLines(curSeq.tokens[curStep], curSeq.targets[curStep], selectedTok);
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => { init(); animate(); });
+</script>
+</body>
+</html>
